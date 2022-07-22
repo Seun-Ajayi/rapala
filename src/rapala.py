@@ -1,21 +1,75 @@
+from webbrowser import Chrome
 from bs4 import BeautifulSoup as bs
 from selenium import webdriver
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.firefox.options import Options as Firefox_Options
+from selenium.webdriver.chrome.options import Options as Chrome_Options
+from selenium.webdriver.firefox.service import Service as Firefox_Service
+from selenium.webdriver.chrome.service import Service as Chrome_Service
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.common.by import By
+import argparse
 import time
 import yaml
 from typing import Any, Dict, List
 
 CONFIG = yaml.load(open("config.yml"), Loader=yaml.FullLoader)
 
+def get_parser() -> argparse.ArgumentParser:
+    """
+    parse command line arguments
+
+    returns:
+        parser - ArgumentParser object
+    """
+
+    parser = argparse.ArgumentParser(description='VOA NEWS Scraper')
+    parser.add_argument(
+        '--driver_type',
+        type=str.lower,
+        default= 'chrome_driver',
+        choices= ['firefox_driver', 'chrome_driver'],
+        help='driver_type: firefox_driver or chrome_driver, default: chrome_driver'
+)
+    parser.add_argument(
+        '--driver_path',
+        type=str,
+        help='Path of the driver of choice e.g: "C:\Program Files\chromedriver.exe"'
+)
+    parser.add_argument(
+        '--filename',
+        type=str,
+        help='Name of the output file'
+)
+    parser.add_argument(
+        '--source_to_start_from',
+        type=int,
+        default=0,
+        help='Source to start scraping from, default: 0'
+)
+    parser.add_argument(
+        '--page_to_start_from',
+        type=int,
+        default=0,
+        help='Page to start scraping from, default: 0'
+)
+    parser.add_argument(
+        '--article_to_start_from',
+        type=int,
+        default=0,
+        help='Article to start scraping from, default: 0'
+)
+
+
+    return parser 
+
+
 class Rapala:
     def __init__(
         self,
-        firefox_path: str = None,
-        chrome_path: str = None,
+        driver_path: str = None,
+        driver_type: str = None,
         prefs: Dict[str, Any] = None,
         filename: str = None,
         unallowed_tokens: List = None,
@@ -24,20 +78,19 @@ class Rapala:
         article_to_start_from: int = None,
     ) -> None:
         """ """
-        self.page_to_start_from = page_to_start_from or 0
-        self.article_to_start_from = article_to_start_from or 0
-        self.source_to_start_from = source_to_start_from or 0
+        self.page_to_start_from = page_to_start_from 
+        self.article_to_start_from = article_to_start_from 
+        self.source_to_start_from = source_to_start_from 
 
-        self.chrome_path = chrome_path 
-        self.firefox_path = firefox_path
+        self.driver_path = driver_path 
+        self.driver_type = driver_type
 
         # disable images in browser for faster loading.
         self.prefs = prefs or {"profile.managed_default_content_settings.images": 2}
         self.driver = None
 
-        self.first_article_path = CONFIG['FIRST_ARTICLE_PATH1'] or CONFIG['FIRST_ARTICLE_PATH1']
-        self.article_path = CONFIG['ARTICLE_PATH1'] or CONFIG['ARTICLE_PATH1']
-
+        self.first_article_path = CONFIG['FIRST_ARTICLE_PATH1'] or CONFIG['FIRST_ARTICLE_PATH2'] 
+        self.article_path = CONFIG['ARTICLE_PATH1'] or CONFIG['ARTICLE_PATH2'] 
         self.sources = CONFIG['SOURCES']
 
         self.sources_page_limit =  CONFIG['PAGE_LIMIT']
@@ -59,22 +112,20 @@ class Rapala:
         This func initializes the webdriver and disables images
         A wait is initialized with a 5 second timeout
         """
-    
-        if self.firefox_path:
-            from selenium.webdriver.firefox.options import Options
+       
+        firefox_options = Firefox_Options()
+        chrome_options = Chrome_Options()
 
-            options = Options()
-            options.add_argument("--headless")
-            options.add_experimental_option("prefs", self.prefs)
-            service = Service(self.firefox_path)
-            driver = webdriver.Firefox(service=service, options=options)
-        else:
-            from selenium.webdriver.chrome.options import Options
-            options = Options()
-            options.add_argument("--headless")
-            options.add_experimental_option("prefs", self.prefs)
-            service = Service(self.chrome_path)
-            driver = webdriver.Chrome(service=service, options=options)
+        driver_dict = {"firefox_driver": webdriver.Firefox, "chrome_driver": webdriver.Chrome}
+        option_dict = {"firefox_driver": firefox_options, "chrome_driver": chrome_options}
+        service_dict = {"firefox_driver": Firefox_Service, "chrome_driver": Chrome_Service}
+
+        option_dict[self.driver_type].add_argument("--window-size=1920x1080")
+        option_dict[self.driver_type].add_argument("--headless")
+        option_dict[self.driver_type].add_experimental_option("prefs", self.prefs)
+        service = service_dict[self.driver_type](self.driver_path)
+        driver = driver_dict[self.driver_type](service=service, options=option_dict[self.driver_type])
+
         # define a generic wait to be used throughout
         driver.wait = WebDriverWait(driver, 5)
 
@@ -82,7 +133,7 @@ class Rapala:
 
     def __write_article_to_text(self, sentences: str) -> None:
         """
-        This func write individual sentences to the file
+        This func writes individual sentences to the file
         """
         sentence_split = filter(None, sentences.split("."))
         for s in sentence_split:
@@ -94,18 +145,16 @@ class Rapala:
         """
         
         content = self.driver.page_source
-        soup = bs(content)
-       
-        title = None
-
-        if title:
+        soup = bs(content, "html.parser")
+     
+        title = soup.find(
+            "h1", attrs={"class": CONFIG['TITLE_CLASS']}
+        )
+        if title == None:
             title = soup.find(
-                "div", attrs={"class": CONFIG['TITLE_CLASS1']}
-            ).text.strip()
-            self.__write_article_to_text(title)
-        elif title == None:
-            title = soup.find("h1", attrs={"class": CONFIG['TITLE_CLASS2']}).text.strip()
-            self.__write_article_to_text(title)
+                "div", attrs={"class": CONFIG['TITLE_CLASS2']}
+            )
+        self.__write_article_to_text(title.text.strip())
 
         category = soup.find(
             "div", attrs={"class": CONFIG['CATEGORY_CLASS']}
@@ -182,5 +231,16 @@ class Rapala:
 
 
 if __name__ == "__main__":
-    rpl = Rapala(chrome_path="C:\Program Files\chromedriver.exe")
+
+    parser = get_parser()
+    params, _ = parser.parse_known_args()
+    
+    rpl = Rapala(
+        driver_path= params.driver_path, 
+        driver_type= params.driver_type,
+        filename= params.filename,
+        source_to_start_from= params.source_to_start_from,
+        page_to_start_from= params.page_to_start_from,
+        article_to_start_from= params.article_to_start_from
+    )
     rpl.start()
